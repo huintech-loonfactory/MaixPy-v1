@@ -168,6 +168,7 @@ static mp_obj_t py_lcd_init(size_t n_args, const mp_obj_t *pos_args, mp_map_t *k
         ARG_ss,
         ARG_clk,
         ARG_lcd_type,
+        ARG_oct,
     };
     static const mp_arg_t allowed_args[] = {
         {MP_QSTR_type, MP_ARG_INT, {.u_int = DEV_SHIELD}},
@@ -185,6 +186,7 @@ static mp_obj_t py_lcd_init(size_t n_args, const mp_obj_t *pos_args, mp_map_t *k
         {MP_QSTR_ss, MP_ARG_INT, {.u_int = 36}},
         {MP_QSTR_clk, MP_ARG_INT, {.u_int = 39}},
         {MP_QSTR_lcd_type, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = LCD_TYPE_ST7789}},
+        {MP_QSTR_oct, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = -1}},
     };
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
     mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
@@ -321,6 +323,11 @@ static mp_obj_t py_lcd_init(size_t n_args, const mp_obj_t *pos_args, mp_map_t *k
             break;
     }
 
+    if (args[ARG_oct].u_int >= 0)
+    {
+        lcd_para.oct = args[ARG_oct].u_int ? true : false;
+    }
+
     // init and clear
     lcd->lcd_para = &lcd_para;
     ret = lcd->init(&lcd_para);
@@ -329,7 +336,7 @@ static mp_obj_t py_lcd_init(size_t n_args, const mp_obj_t *pos_args, mp_map_t *k
     if (ret != 0)
     {
         lcd_para.width = 0;
-        lcd_para.width  = 0;
+        lcd_para.height = 0;
         width_curr = 0;
         height_curr = 0;
         mp_raise_OSError(ret);
