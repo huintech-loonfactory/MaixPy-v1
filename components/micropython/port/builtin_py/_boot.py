@@ -31,8 +31,6 @@ except Exception:
 if ide:
     os.remove(ide_mode_conf)
     from machine import UART
-    import lcd
-    lcd.init(color=lcd.PINK)
     repl = UART.repl_uart()
     repl.init(1500000, 8, None, 1, read_buf_len=2048, ide=True, from_ide=False)
     sys.exit()
@@ -158,4 +156,3 @@ Wiki          : https://wiki.sipeed.com/maixpy
 '''
 print(banner)
 del banner
-

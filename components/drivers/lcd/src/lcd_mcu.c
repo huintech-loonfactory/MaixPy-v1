@@ -192,6 +192,60 @@ static void lcd_init_sequence_for_ili9486(void)
 
 }
 
+static void lcd_init_sequence_for_st7735s(void)
+{
+    uint8_t t[16];
+
+    tft_write_command(0xB1);
+    t[0] = 0x01; t[1] = 0x2C; t[2] = 0x2D;
+    tft_write_byte(t, 3);
+
+    tft_write_command(0xB2);
+    t[0] = 0x01; t[1] = 0x2C; t[2] = 0x2D;
+    tft_write_byte(t, 3);
+
+    tft_write_command(0xB3);
+    t[0] = 0x01; t[1] = 0x2C; t[2] = 0x2D; t[3] = 0x01; t[4] = 0x2C; t[5] = 0x2D;
+    tft_write_byte(t, 6);
+
+    tft_write_command(0xB4);
+    t[0] = 0x07;
+    tft_write_byte(t, 1);
+
+    tft_write_command(0xC0);
+    t[0] = 0xA2; t[1] = 0x02; t[2] = 0x84;
+    tft_write_byte(t, 3);
+
+    tft_write_command(0xC1);
+    t[0] = 0xC5;
+    tft_write_byte(t, 1);
+
+    tft_write_command(0xC2);
+    t[0] = 0x0A; t[1] = 0x00;
+    tft_write_byte(t, 2);
+
+    tft_write_command(0xC3);
+    t[0] = 0x8A; t[1] = 0x2A;
+    tft_write_byte(t, 2);
+
+    tft_write_command(0xC4);
+    t[0] = 0x8A; t[1] = 0xEE;
+    tft_write_byte(t, 2);
+
+    tft_write_command(0xC5);
+    t[0] = 0x0E;
+    tft_write_byte(t, 1);
+
+    tft_write_command(0xE0);
+    t[0] = 0x0F; t[1] = 0x1A; t[2] = 0x0F; t[3] = 0x18; t[4] = 0x2F; t[5] = 0x28; t[6] = 0x20; t[7] = 0x22;
+    t[8] = 0x1F; t[9] = 0x1B; t[10] = 0x23; t[11] = 0x37; t[12] = 0x00; t[13] = 0x07; t[14] = 0x02; t[15] = 0x10;
+    tft_write_byte(t, 16);
+
+    tft_write_command(0xE1);
+    t[0] = 0x0F; t[1] = 0x1B; t[2] = 0x0F; t[3] = 0x17; t[4] = 0x33; t[5] = 0x2C; t[6] = 0x29; t[7] = 0x2E;
+    t[8] = 0x30; t[9] = 0x30; t[10] = 0x39; t[11] = 0x3F; t[12] = 0x00; t[13] = 0x07; t[14] = 0x03; t[15] = 0x10;
+    tft_write_byte(t, 16);
+}
 #include "syslog.h"
 
 static int mcu_lcd_init(lcd_para_t *lcd_para)
@@ -232,7 +286,7 @@ static int mcu_lcd_init(lcd_para_t *lcd_para)
     msleep(120);
     /*pixel format*/
     tft_write_command(PIXEL_FORMAT_SET);
-    data = 0x55;
+    data = (lcd_para->lcd_type == LCD_TYPE_ST7735S) ? 0x05 : 0x55;
     tft_write_byte(&data, 1);
     msleep(10);
     
@@ -253,16 +307,24 @@ static int mcu_lcd_init(lcd_para_t *lcd_para)
     return 0;
 }
 
-static int mcu_lcd_init_shield(lcd_para_t *lcd_para){
+static int mcu_lcd_init_shield(lcd_para_t *lcd_para)
+{
+    lcd_preinit_register_handler(NULL);
+
     if (lcd_para->lcd_type == LCD_TYPE_ILI9486)
     {
         lcd_preinit_register_handler(&lcd_init_sequence_for_ili9486);
     }
-    mcu_lcd_init(lcd_para);
-    if (lcd_para->lcd_type == LCD_TYPE_ILI9481)
+    else if (lcd_para->lcd_type == LCD_TYPE_ILI9481)
     {
         lcd_preinit_register_handler(&lcd_init_sequence_for_ili9481);
     }
+    else if (lcd_para->lcd_type == LCD_TYPE_ST7735S)
+    {
+        lcd_preinit_register_handler(&lcd_init_sequence_for_st7735s);
+    }
+
+    mcu_lcd_init(lcd_para);
     if (0 != lcd_para->dir)
     {
         mcu_lcd_set_direction(lcd_para->dir);
@@ -642,7 +704,7 @@ static void lcd_ram_cpyimg(char* lcd, int lcdw, char* img, int imgw, int imgh, i
 	return;
 }
 
-/************************* MCU 屏参数  ****************************/
+/************************* MCU 屏参?? ****************************/
 static lcd_para_t mcu_lcd_default = {
 	.lcd_type   = LCD_TYPE_ST7789,
 	.width      = 320,
@@ -673,3 +735,4 @@ lcd_t lcd_mcu = {
 	.draw_pic_grayroi = mcu_lcd_draw_pic_grayroi,
 	.fill_rectangle	= mcu_lcd_fill_rectangle,
 };
+
