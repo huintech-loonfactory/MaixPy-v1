@@ -83,6 +83,7 @@ typedef enum
 	LCD_TYPE_5P0_7P0,
 	LCD_TYPE_5P0_IPS,
 	LCD_TYPE_480_272_4P3,
+    LCD_TYPE_ST7735S,
 }lcd_type_t;
 
 typedef enum _lcd_dir

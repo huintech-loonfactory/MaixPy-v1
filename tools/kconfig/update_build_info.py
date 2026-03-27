@@ -186,6 +186,25 @@ def append_time_info(time_info_filename, version_info_filename, file_type):
             version_dev = version[2]
         if  len(version) >= 4:
             version_dev2 = version[3]
+    else:
+        # Fallback version when repository has no semantic git tag.
+        # Useful for local snapshots so tooling that expects a version does not
+        # receive 0.0.0.
+        fallback_version = os.environ.get("MAIXPY_FALLBACK_VERSION", "6.3.0")
+        fallback = fallback_version.split(".")
+        for i, v in enumerate(fallback):
+            try:
+                fallback[i] = int(v)
+            except Exception:
+                fallback[i] = 0
+        if len(fallback) >= 1:
+            version_major = fallback[0]
+        if len(fallback) >= 2:
+            version_minor = fallback[1]
+        if len(fallback) >= 3:
+            version_dev = fallback[2]
+        if len(fallback) >= 4:
+            version_dev2 = fallback[3]
     if file_type == "header":
         dirty_value = 1 if git_dirty=="dirty" else 0
     elif file_type == "cmake":
@@ -281,5 +300,4 @@ for fmt, filename in out_format.items():
     # not check always create
     func = OUTPUT_FORMATS[fmt]
     func(filename)
-
 

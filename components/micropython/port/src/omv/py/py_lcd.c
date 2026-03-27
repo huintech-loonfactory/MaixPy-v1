@@ -221,6 +221,10 @@ static mp_obj_t py_lcd_init(size_t n_args, const mp_obj_t *pos_args, mp_map_t *k
 
     lcd_para.freq = args[ARG_freq].u_int;
     lcd_para.lcd_type = args[ARG_lcd_type].u_int;
+    if (lcd_para.lcd_type == LCD_TYPE_ST7735S)
+    {
+        lcd_para.oct = false;
+    }
 
     type = args[ARG_type].u_int;
 
@@ -230,6 +234,10 @@ static mp_obj_t py_lcd_init(size_t n_args, const mp_obj_t *pos_args, mp_map_t *k
             return mp_const_none;
         case DEV_SHIELD:
             py_lcd_load_config(&lcd_para);
+            if (lcd_para.lcd_type == LCD_TYPE_ST7735S)
+            {
+                lcd_para.oct = false;
+            }
 
             fpioa_set_function(lcd_para.rst_pin, FUNC_GPIOHS0 + RST_GPIONUM);
             fpioa_set_function(lcd_para.dcx_pin, FUNC_GPIOHS0 + DCX_GPIONUM);
@@ -780,6 +788,14 @@ static const mp_map_elem_t globals_dict_table[] = {
     {MP_OBJ_NEW_QSTR(MP_QSTR_draw_string), (mp_obj_t)&py_lcd_draw_string_obj},
     {MP_OBJ_NEW_QSTR(MP_QSTR_fill_rectangle), (mp_obj_t)&py_lcd_fill_rectangle_obj},
     {MP_OBJ_NEW_QSTR(MP_QSTR_register), (mp_obj_t)&py_lcd_write_register_obj},
+    {MP_OBJ_NEW_QSTR(MP_QSTR_LCD_TYPE_ST7789), MP_OBJ_NEW_SMALL_INT(LCD_TYPE_ST7789)},
+    {MP_OBJ_NEW_QSTR(MP_QSTR_LCD_TYPE_ILI9486), MP_OBJ_NEW_SMALL_INT(LCD_TYPE_ILI9486)},
+    {MP_OBJ_NEW_QSTR(MP_QSTR_LCD_TYPE_ILI9481), MP_OBJ_NEW_SMALL_INT(LCD_TYPE_ILI9481)},
+    {MP_OBJ_NEW_QSTR(MP_QSTR_LCD_TYPE_ST7735S), MP_OBJ_NEW_SMALL_INT(LCD_TYPE_ST7735S)},
+    {MP_OBJ_NEW_QSTR(MP_QSTR_ST7789), MP_OBJ_NEW_SMALL_INT(LCD_TYPE_ST7789)},
+    {MP_OBJ_NEW_QSTR(MP_QSTR_ILI9486), MP_OBJ_NEW_SMALL_INT(LCD_TYPE_ILI9486)},
+    {MP_OBJ_NEW_QSTR(MP_QSTR_ILI9481), MP_OBJ_NEW_SMALL_INT(LCD_TYPE_ILI9481)},
+    {MP_OBJ_NEW_QSTR(MP_QSTR_ST7735S), MP_OBJ_NEW_SMALL_INT(LCD_TYPE_ST7735S)},
     {MP_OBJ_NEW_QSTR(MP_QSTR_XY_RLUD), MP_OBJ_NEW_SMALL_INT(DIR_XY_RLUD)},
     {MP_OBJ_NEW_QSTR(MP_QSTR_YX_RLUD), MP_OBJ_NEW_SMALL_INT(DIR_YX_RLUD)},
     {MP_OBJ_NEW_QSTR(MP_QSTR_XY_LRUD), MP_OBJ_NEW_SMALL_INT(DIR_XY_LRUD)},
@@ -817,3 +833,8 @@ const mp_obj_module_t lcd_module = {
     .base = {&mp_type_module},
     .globals = (mp_obj_t)&globals_dict,
 };
+
+
+
+
+

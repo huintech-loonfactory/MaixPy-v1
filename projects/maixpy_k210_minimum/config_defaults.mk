@@ -103,7 +103,7 @@ CONFIG_MAIXPY_BUILTIN_PY_FPIOA_MANAGER=y
 # CONFIG_MAIXPY_K210_UARTHS_DEBUG is not set
 # end of Debug configurations
 
-CONFIG_BUILTIN_PY_DIR=""
+CONFIG_BUILTIN_PY_DIR="${PROJECT_PATH}/builtin_py"
 # end of Micropython configurations
 
 #
