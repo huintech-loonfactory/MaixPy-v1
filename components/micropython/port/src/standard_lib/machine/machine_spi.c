@@ -37,6 +37,7 @@
 #include "spi.h"
 #include "fpioa.h"
 #include "sipeed_spi.h"
+#include "sipeed_spi_slave.h"
 
 #if MICROPY_PY_MACHINE_HW_SPI
 
@@ -104,12 +105,17 @@ typedef struct _machine_hw_spi_obj_t {
     int8_t             pin_sck;
     int8_t             pin_cs[4];
     int8_t             pin_d[8];
+    int8_t             pin_int;    /* GPIOHS channel for CS-edge interrupt (slave mode) */
+    int8_t             pin_ready;  /* GPIOHS channel for slave-ready output (slave mode) */
     enum {
         MACHINE_HW_SPI_STATE_NONE,
         MACHINE_HW_SPI_STATE_INIT,
         MACHINE_HW_SPI_STATE_DEINIT
     } state;
 } machine_hw_spi_obj_t;
+
+/* Forward declaration: defined near the bottom, used in make_new(). */
+STATIC const mp_obj_type_t machine_spi_slave_type;
 
 #if MICROPY_PY_MACHINE_SW_SPI
 
@@ -232,6 +238,16 @@ STATIC void machine_hw_spi_transfer(mp_obj_base_t *self_in, size_t len, const ui
         return;
     }
 #endif
+    /* Slave mode: redirect to shared buffer operations.
+     * write(buf)  → src  != NULL → update TX buffer (master reads this next poll)
+     * read(n)     → dest != NULL → copy from RX buffer (master's last write)  */
+    if (self->mode == MACHINE_SPI_MODE_SLAVE) {
+        if (src != NULL)
+            sipeed_spi_slave_set_tx(src, (uint32_t)len);
+        if (dest != NULL)
+            sipeed_spi_slave_get_rx(dest, (uint32_t)len);
+        return;
+    }
     if(dest==NULL)
         sipeed_spi_transfer_data_standard(self->id, cs, src, NULL, len, 0);
     else
@@ -294,7 +310,10 @@ STATIC void machine_hw_spi_init(mp_obj_base_t *self_in, size_t n_args, const mp_
             ARG_d5,
             ARG_d6,
             ARG_d7,
-            // ARG_pins//TODO: pins dict( tuple in pyboard or esp8266) support 
+            ARG_pin_int,
+            ARG_pin_ready,
+            ARG_dmac_ch,
+            // ARG_pins//TODO: pins dict( tuple in pyboard or esp8266) support
     };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_id,       MP_ARG_INT, {.u_int = -1} },
@@ -317,8 +336,11 @@ STATIC void machine_hw_spi_init(mp_obj_base_t *self_in, size_t n_args, const mp_
         { MP_QSTR_d3,      MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
         { MP_QSTR_d4,      MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
         { MP_QSTR_d5,      MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
-        { MP_QSTR_d6,      MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
-        { MP_QSTR_d7,      MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
+        { MP_QSTR_d6,        MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
+        { MP_QSTR_d7,        MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
+        { MP_QSTR_pin_int,   MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
+        { MP_QSTR_pin_ready, MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
+        { MP_QSTR_dmac_ch,   MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = DMAC_CHANNEL5} },
         // { MP_QSTR_pins,      MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
     };
 
@@ -328,15 +350,17 @@ STATIC void machine_hw_spi_init(mp_obj_base_t *self_in, size_t n_args, const mp_
     //check args
     if(args[ARG_id].u_int == SPI_DEVICE_3 || args[ARG_id].u_int < 0)
         mp_raise_ValueError("[MAIXPY]SPI: spi id error( > 0 & !=3 )");
-    if(args[ARG_id].u_int == SPI_DEVICE_2) //TODO: slave mode support
-        mp_raise_NotImplementedError("[MAIXPY]SPI: SPI2 only for slave mode");
+    /* SPI2 is a hardware-only slave peripheral */
+    if(args[ARG_id].u_int == SPI_DEVICE_2 && args[ARG_mode].u_int != MACHINE_SPI_MODE_SLAVE)
+        mp_raise_ValueError("[MAIXPY]SPI: SPI2 is slave-only; use mode=SPI.MODE_SLAVE");
     if(args[ARG_mode].u_int < MACHINE_SPI_MODE_MASTER || args[ARG_mode].u_int>=MACHINE_SPI_MODE_MAX)
         mp_raise_ValueError("[MAIXPY]SPI: spi mode error");
     if( (args[ARG_mode].u_int==MACHINE_SPI_MODE_SLAVE)&& (args[ARG_id].u_int!=SPI_DEVICE_2) )
         mp_raise_ValueError("[MAIXPY]SPI: slave mode only for SPI2");
-    if( args[ARG_mode].u_int != MACHINE_SPI_MODE_MASTER) //TODO: support 2/4/8(dual quad octal) lines mode
-        mp_raise_NotImplementedError("[MAIXPY]SPI: only standard mode supported yet");
-    if( args[ARG_baudrate].u_int<=0)
+    if( args[ARG_mode].u_int != MACHINE_SPI_MODE_MASTER && args[ARG_mode].u_int != MACHINE_SPI_MODE_SLAVE)
+        mp_raise_NotImplementedError("[MAIXPY]SPI: only standard(master) and slave modes supported");
+    /* baudrate is irrelevant for slave mode (master controls the clock) */
+    if( args[ARG_mode].u_int != MACHINE_SPI_MODE_SLAVE && args[ARG_baudrate].u_int<=0)
         mp_raise_ValueError("[MAIXPY]SPI: baudrate(freq) value error");
     if( args[ARG_polarity].u_int != 0 && args[ARG_polarity].u_int != 1)
         mp_raise_ValueError("[MAIXPY]SPI: polarity should be 0 or 1");
@@ -407,7 +431,7 @@ STATIC void machine_hw_spi_init(mp_obj_base_t *self_in, size_t n_args, const mp_
 
     }
 
-    self->id = args[ARG_id].u_int;
+    self->id        = args[ARG_id].u_int;
     self->mode      = args[ARG_mode].u_int;
     self->baudrate  = args[ARG_baudrate].u_int;
     self->polarity  = args[ARG_polarity].u_int;
@@ -415,6 +439,8 @@ STATIC void machine_hw_spi_init(mp_obj_base_t *self_in, size_t n_args, const mp_
     self->bits      = args[ARG_bits].u_int;
     self->firstbit  = args[ARG_firstbit].u_int;
     self->pin_sck   = sck;
+    self->pin_int   = -1;
+    self->pin_ready = -1;
     for( uint8_t i=0; i<4; ++i)
         self->pin_cs[i] = cs[i];
     for( uint8_t i=0; i<8; ++i)
@@ -477,9 +503,26 @@ STATIC void machine_hw_spi_init(mp_obj_base_t *self_in, size_t n_args, const mp_
         spi_init(self->id, work_mode, SPI_FF_STANDARD, self->bits, 0);
         spi_set_clk_rate(self->id, self->baudrate);
     }
-    else//TODO:
+    else // MACHINE_SPI_MODE_SLAVE (SPI_DEVICE_2 only)
     {
-
+        int pin_int   = check_pin(args[ARG_pin_int].u_obj);
+        int pin_ready = check_pin(args[ARG_pin_ready].u_obj);
+        if (pin_int < 0 || pin_int > 31)
+            mp_raise_ValueError("[MAIXPY]SPI: pin_int required for slave mode (0-31)");
+        if (pin_ready < 0 || pin_ready > 31)
+            mp_raise_ValueError("[MAIXPY]SPI: pin_ready required for slave mode (0-31)");
+        self->pin_int   = (int8_t)pin_int;
+        self->pin_ready = (int8_t)pin_ready;
+        /* sipeed_spi_slave_init() handles all FPIOA mapping internally */
+        if (args[ARG_dmac_ch].u_int < 0 || args[ARG_dmac_ch].u_int >= DMAC_CHANNEL_MAX)
+            mp_raise_ValueError("[MAIXPY]SPI: dmac_ch out of range (0-5)");
+        sipeed_spi_slave_init(
+            (uint8_t)(self->pin_d[0] >= 0 ? self->pin_d[0] : 0),  /* D0  */
+            (uint8_t)(self->pin_cs[0] >= 0 ? self->pin_cs[0] : 0), /* SS  */
+            (uint8_t)(self->pin_sck >= 0 ? self->pin_sck : 0),     /* SCLK */
+            (uint8_t)pin_int,
+            (uint8_t)pin_ready,
+            (dmac_channel_number_t)args[ARG_dmac_ch].u_int);
     }
     self->state = MACHINE_HW_SPI_STATE_INIT;
 }
@@ -490,7 +533,11 @@ mp_obj_t machine_hw_spi_make_new(const mp_obj_type_t *type, size_t n_args, size_
 
     mp_map_t kw_args;
     mp_map_init_fixed_table(&kw_args, n_kw, all_args + n_args);
-	machine_hw_spi_init((mp_obj_base_t*)self, n_args, all_args, &kw_args);
+    machine_hw_spi_init((mp_obj_base_t*)self, n_args, all_args, &kw_args);
+
+    /* Return slave-specific type so only slave methods are visible */
+    if (self->mode == MACHINE_SPI_MODE_SLAVE)
+        self->base.type = &machine_spi_slave_type;
 
     return MP_OBJ_FROM_PTR(self);
 }
@@ -506,6 +553,29 @@ STATIC mp_obj_t machine_spi_init(size_t n_args, const mp_obj_t *args, mp_map_t *
     return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(machine_spi_init_obj, 1, machine_spi_init);
+
+/* ---- Slave-mode helpers (only reachable via machine_spi_slave_type) ---- */
+
+STATIC mp_obj_t machine_spi_slave_any(mp_obj_t self_in) {
+    return mp_obj_new_bool(sipeed_spi_slave_rx_ready());
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(machine_spi_slave_any_obj, machine_spi_slave_any);
+
+STATIC mp_obj_t machine_spi_slave_rx_clear(mp_obj_t self_in) {
+    sipeed_spi_slave_rx_clear();
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(machine_spi_slave_rx_clear_obj, machine_spi_slave_rx_clear);
+
+STATIC mp_obj_t machine_spi_slave_tx_addr(mp_obj_t self_in) {
+    return mp_obj_new_int_from_uint(sipeed_spi_slave_tx_addr());
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(machine_spi_slave_tx_addr_obj, machine_spi_slave_tx_addr);
+
+STATIC mp_obj_t machine_spi_slave_rx_addr(mp_obj_t self_in) {
+    return mp_obj_new_int_from_uint(sipeed_spi_slave_rx_addr());
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(machine_spi_slave_rx_addr_obj, machine_spi_slave_rx_addr);
 
 STATIC mp_obj_t machine_spi_deinit(mp_obj_t self) {
     mp_obj_base_t *s = (mp_obj_base_t*)MP_OBJ_TO_PTR(self);
@@ -672,54 +742,76 @@ STATIC mp_obj_t mp_machine_spi_write_readinto(size_t n_args, const mp_obj_t *pos
 }
 MP_DEFINE_CONST_FUN_OBJ_KW(mp_machine_hw_spi_write_readinto_obj, 2, mp_machine_spi_write_readinto);
 
-STATIC const mp_rom_map_elem_t machine_spi_locals_dict_table[] = {
-    { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&machine_spi_init_obj) },
-    { MP_ROM_QSTR(MP_QSTR_deinit), MP_ROM_PTR(&machine_spi_deinit_obj) },
-    { MP_ROM_QSTR(MP_QSTR_read), MP_ROM_PTR(&mp_machine_spi_read_obj) },
-    { MP_ROM_QSTR(MP_QSTR_readinto), MP_ROM_PTR(&mp_machine_spi_readinto_obj) },
-    { MP_ROM_QSTR(MP_QSTR_write), MP_ROM_PTR(&mp_machine_hw_spi_write_obj) },
-    { MP_ROM_QSTR(MP_QSTR_write_readinto), MP_ROM_PTR(&mp_machine_hw_spi_write_readinto_obj) },
+/* Shared class-level constants exposed on both master and slave types */
+#define MP_SPI_CLASS_CONSTANTS \
+    { MP_ROM_QSTR(MP_QSTR_SPI0), MP_ROM_INT(SPI_DEVICE_0) }, \
+    { MP_ROM_QSTR(MP_QSTR_SPI1), MP_ROM_INT(SPI_DEVICE_1) }, \
+    { MP_ROM_QSTR(MP_QSTR_SPI2), MP_ROM_INT(SPI_DEVICE_2) }, \
+    { MP_ROM_QSTR(MP_QSTR_MSB), MP_ROM_INT(MACHINE_SPI_FIRSTBIT_MSB) }, \
+    { MP_ROM_QSTR(MP_QSTR_LSB), MP_ROM_INT(MACHINE_SPI_FIRSTBIT_LSB) }, \
+    { MP_ROM_QSTR(MP_QSTR_MODE_MASTER), MP_ROM_INT(MACHINE_SPI_MODE_MASTER) }, \
+    { MP_ROM_QSTR(MP_QSTR_MODE_MASTER_2), MP_ROM_INT(MACHINE_SPI_MODE_MASTER_2) }, \
+    { MP_ROM_QSTR(MP_QSTR_MODE_MASTER_4), MP_ROM_INT(MACHINE_SPI_MODE_MASTER_4) }, \
+    { MP_ROM_QSTR(MP_QSTR_MODE_MASTER_8), MP_ROM_INT(MACHINE_SPI_MODE_MASTER_8) }, \
+    { MP_ROM_QSTR(MP_QSTR_MODE_SLAVE), MP_ROM_INT(MACHINE_SPI_MODE_SLAVE) }, \
+    { MP_ROM_QSTR(MP_QSTR_CS0), MP_ROM_INT(MACHINE_SPI_CS0) }, \
+    { MP_ROM_QSTR(MP_QSTR_CS1), MP_ROM_INT(MACHINE_SPI_CS1) }, \
+    { MP_ROM_QSTR(MP_QSTR_CS2), MP_ROM_INT(MACHINE_SPI_CS2) }, \
+    { MP_ROM_QSTR(MP_QSTR_CS3), MP_ROM_INT(MACHINE_SPI_CS3) },
 
-    //spi
-    { MP_ROM_QSTR(MP_QSTR_SPI0), MP_ROM_INT(SPI_DEVICE_0) },
-    { MP_ROM_QSTR(MP_QSTR_SPI1), MP_ROM_INT(SPI_DEVICE_1) },
-    { MP_ROM_QSTR(MP_QSTR_SPI2), MP_ROM_INT(SPI_DEVICE_2) },
+/* ---- Master locals_dict ---- */
+STATIC const mp_rom_map_elem_t machine_spi_locals_dict_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_init),           MP_ROM_PTR(&machine_spi_init_obj) },
+    { MP_ROM_QSTR(MP_QSTR_deinit),         MP_ROM_PTR(&machine_spi_deinit_obj) },
+    { MP_ROM_QSTR(MP_QSTR_read),           MP_ROM_PTR(&mp_machine_spi_read_obj) },
+    { MP_ROM_QSTR(MP_QSTR_readinto),       MP_ROM_PTR(&mp_machine_spi_readinto_obj) },
+    { MP_ROM_QSTR(MP_QSTR_write),          MP_ROM_PTR(&mp_machine_hw_spi_write_obj) },
+    { MP_ROM_QSTR(MP_QSTR_write_readinto), MP_ROM_PTR(&mp_machine_hw_spi_write_readinto_obj) },
 #if MICROPY_PY_MACHINE_SW_SPI
     { MP_ROM_QSTR(MP_QSTR_SPI_SOFT), MP_ROM_INT(SPI_SOFTWARE) },
 #endif
-    //not support SPI3 currently for SPI3 used by flash
-    // { MP_ROM_QSTR(MP_QSTR_SPI3), MP_ROM_INT(SPI_DEVICE_3) },
-    //firstbit
-    { MP_ROM_QSTR(MP_QSTR_MSB), MP_ROM_INT(MACHINE_SPI_FIRSTBIT_MSB) },
-    { MP_ROM_QSTR(MP_QSTR_LSB), MP_ROM_INT(MACHINE_SPI_FIRSTBIT_LSB) },
-    //mode
-    { MP_ROM_QSTR(MP_QSTR_MODE_MASTER), MP_ROM_INT(MACHINE_SPI_MODE_MASTER) },
-    { MP_ROM_QSTR(MP_QSTR_MODE_MASTER_2), MP_ROM_INT(MACHINE_SPI_MODE_MASTER_2) },
-    { MP_ROM_QSTR(MP_QSTR_MODE_MASTER_4), MP_ROM_INT(MACHINE_SPI_MODE_MASTER_4) },
-    { MP_ROM_QSTR(MP_QSTR_MODE_MASTER_8), MP_ROM_INT(MACHINE_SPI_MODE_MASTER_8) },
-    { MP_ROM_QSTR(MP_QSTR_MODE_SLAVE), MP_ROM_INT(MACHINE_SPI_MODE_SLAVE) },
-    //cs(chip select)
-    { MP_ROM_QSTR(MP_QSTR_CS0), MP_ROM_INT(MACHINE_SPI_CS0) },
-    { MP_ROM_QSTR(MP_QSTR_CS1), MP_ROM_INT(MACHINE_SPI_CS1) },
-    { MP_ROM_QSTR(MP_QSTR_CS2), MP_ROM_INT(MACHINE_SPI_CS2) },
-    { MP_ROM_QSTR(MP_QSTR_CS3), MP_ROM_INT(MACHINE_SPI_CS3) },
+    MP_SPI_CLASS_CONSTANTS
 };
-
 MP_DEFINE_CONST_DICT(mp_machine_spi_locals_dict, machine_spi_locals_dict_table);
 
+/* ---- Slave locals_dict (only slave-relevant methods) ---- */
+STATIC const mp_rom_map_elem_t machine_spi_slave_locals_dict_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_deinit),   MP_ROM_PTR(&machine_spi_deinit_obj) },
+    { MP_ROM_QSTR(MP_QSTR_write),    MP_ROM_PTR(&mp_machine_hw_spi_write_obj) },
+    { MP_ROM_QSTR(MP_QSTR_read),     MP_ROM_PTR(&mp_machine_spi_read_obj) },
+    { MP_ROM_QSTR(MP_QSTR_readinto), MP_ROM_PTR(&mp_machine_spi_readinto_obj) },
+    { MP_ROM_QSTR(MP_QSTR_any),      MP_ROM_PTR(&machine_spi_slave_any_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rx_clear), MP_ROM_PTR(&machine_spi_slave_rx_clear_obj) },
+    { MP_ROM_QSTR(MP_QSTR_tx_addr),  MP_ROM_PTR(&machine_spi_slave_tx_addr_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rx_addr),  MP_ROM_PTR(&machine_spi_slave_rx_addr_obj) },
+    MP_SPI_CLASS_CONSTANTS
+};
+MP_DEFINE_CONST_DICT(mp_machine_spi_slave_locals_dict, machine_spi_slave_locals_dict_table);
+
 STATIC const mp_machine_hw_spi_p_t machine_hw_spi_p = {
-    .init = machine_hw_spi_init,
-    .deinit = machine_hw_spi_deinit,
+    .init     = machine_hw_spi_init,
+    .deinit   = machine_hw_spi_deinit,
     .transfer = machine_hw_spi_transfer,
+};
+
+/* Slave type: same name "SPI" so repr() is consistent, not registered in modmachine.
+ * Returned dynamically by machine_hw_spi_make_new when mode=MODE_SLAVE. */
+STATIC const mp_obj_type_t machine_spi_slave_type = {
+    { &mp_type_type },
+    .name        = MP_QSTR_SPI,
+    .print       = machine_hw_spi_print,
+    .make_new    = machine_hw_spi_make_new,
+    .protocol    = &machine_hw_spi_p,
+    .locals_dict = (mp_obj_dict_t *)&mp_machine_spi_slave_locals_dict,
 };
 
 const mp_obj_type_t machine_hw_spi_type = {
     { &mp_type_type },
-    .name = MP_QSTR_SPI,
-    .print = machine_hw_spi_print,
-    .make_new = machine_hw_spi_make_new,
-    .protocol = &machine_hw_spi_p,
-    .locals_dict = (mp_obj_dict_t *) &mp_machine_spi_locals_dict,
+    .name        = MP_QSTR_SPI,
+    .print       = machine_hw_spi_print,
+    .make_new    = machine_hw_spi_make_new,
+    .protocol    = &machine_hw_spi_p,
+    .locals_dict = (mp_obj_dict_t *)&mp_machine_spi_locals_dict,
 };
 
 #endif //MICROPY_PY_MACHINE_HW_SPI
