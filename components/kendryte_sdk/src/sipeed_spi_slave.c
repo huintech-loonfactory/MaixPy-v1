@@ -6,15 +6,16 @@
 #include <plic.h>
 #include "sipeed_spi_slave.h"
 
-/* Shared buffers: 64-byte aligned for DMA, fixed in DRAM */
+/* Shared buffers live in a fixed linker-reserved SRAM window so the master can
+ * hardcode stable addresses across firmware rebuilds. */
 sipeed_uint8_t g_spi_slave_tx_buf[SPI_SLAVE_TX_BUF_SIZE]
-    __attribute__((section(".dram0.bss"), aligned(64)));
+    __attribute__((section(".spi_slave_buf.tx"), aligned(64), used));
 
 sipeed_uint8_t g_spi_slave_rx_buf[SPI_SLAVE_RX_BUF_SIZE]
-    __attribute__((section(".dram0.bss"), aligned(64)));
+    __attribute__((section(".spi_slave_buf.rx"), aligned(64), used));
 
 static sipeed_uint8_t s_config_buf[8]
-    __attribute__((section(".dram0.bss"), aligned(8)));
+    __attribute__((section(".spi_slave_buf.cfg"), aligned(8), used));
 
 static volatile sipeed_uint8_t s_rx_ready = 0;
 

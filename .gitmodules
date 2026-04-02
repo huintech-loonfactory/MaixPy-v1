@@ -3,7 +3,7 @@
 	url = https://github.com/ulfalizer/Kconfiglib.git
 [submodule "components/kendryte_sdk/kendryte-standalone-sdk"]
 	path = components/kendryte_sdk/kendryte-standalone-sdk
-	url = https://github.com/sipeed/kendryte-standalone-sdk
+	url = https://github.com/huintech-loonfactory/kendryte-standalone-sdk.git
 [submodule "components/micropython/core"]
 	path = components/micropython/core
 	url = https://github.com/huintech-loonfactory/micropython-k210.git

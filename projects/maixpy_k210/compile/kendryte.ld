@@ -9,7 +9,8 @@ MEMORY
    * Memory with CPU cache.
    *6M CPU SRAM
    */
-  ram (wxa!ri) : ORIGIN = 0x80000000, LENGTH = (6 * 1024 * 1024)
+  ram (wxa!ri) : ORIGIN = 0x80000000, LENGTH = ((6 * 1024 * 1024) - 0x400)
+  ram_spi_fixed (wxa!ri) : ORIGIN = (0x80000000 + ((6 * 1024 * 1024) - 0x400)), LENGTH = 0x400
   /*
    * Memory without CPU cache
    * 6M CPU SRAM
@@ -258,5 +259,24 @@ SECTIONS
 
   /* Heap end is at the end of memory, the memory size can set in kconfig */
   PROVIDE( _heap_end = _ram_end );
-}
 
+  /* Fixed-address SPI slave buffers for ESP32/K210 handshaking.
+   * Keep this after _end/_heap_* so switching to ram_spi_fixed does not
+   * corrupt the runtime heap and stack symbols. */
+  .spi_slave_buf (NOLOAD) :
+  {
+    . = ALIGN(64);
+    PROVIDE( __spi_slave_tx_start = ABSOLUTE(.) );
+    KEEP(*(.spi_slave_buf.tx))
+    . = ALIGN(64);
+    PROVIDE( __spi_slave_rx_start = ABSOLUTE(.) );
+    KEEP(*(.spi_slave_buf.rx))
+    . = ALIGN(8);
+    PROVIDE( __spi_slave_cfg_start = ABSOLUTE(.) );
+    KEEP(*(.spi_slave_buf.cfg))
+    . = ALIGN(8);
+    PROVIDE( __spi_slave_buf_end = ABSOLUTE(.) );
+  } >ram_spi_fixed AT>ram_spi_fixed :ram
+
+  ASSERT(_heap_start <= _heap_end, "heap_start exceeds heap_end; reserved RAM placement broke runtime memory layout")
+}

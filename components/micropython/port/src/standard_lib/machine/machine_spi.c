@@ -426,9 +426,16 @@ STATIC void machine_hw_spi_init(mp_obj_base_t *self_in, size_t n_args, const mp_
             }
         }
     }
-    else//TODO: nonstandard mode support 
+    else // slave mode: SPI2 uses a single D0 data pin
     {
-
+        ret = check_pin(args[ARG_d0].u_obj);
+        if (ret < 0)
+            ret = check_pin(args[ARG_mosi].u_obj);
+        if (ret >= 0)
+        {
+            d[0] = ret;
+            is_set_fpioa = true;
+        }
     }
 
     self->id        = args[ARG_id].u_int;
@@ -507,6 +514,8 @@ STATIC void machine_hw_spi_init(mp_obj_base_t *self_in, size_t n_args, const mp_
     {
         int pin_int   = check_pin(args[ARG_pin_int].u_obj);
         int pin_ready = check_pin(args[ARG_pin_ready].u_obj);
+        if (self->pin_d[0] < 0)
+            mp_raise_ValueError("[MAIXPY]SPI: d0 (or mosi) required for slave mode");
         if (pin_int < 0 || pin_int > 31)
             mp_raise_ValueError("[MAIXPY]SPI: pin_int required for slave mode (0-31)");
         if (pin_ready < 0 || pin_ready > 31)
